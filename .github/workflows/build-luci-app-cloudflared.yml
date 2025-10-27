@@ -107,6 +107,23 @@ jobs:
             grep -rlE 'Cloudflare[[:space:]]*零信任隧道|零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i -E 's@Cloudflare[[:space:]]*零信任隧道@Cloudflared@g; s@零信任隧道@@g'
           fi
 
+          # 确保有一个明确的 Services 菜单文件，避免其他文件覆盖
+          mkdir -p "$PKGDIR/root/usr/share/luci/menu.d"
+          cat > "$PKGDIR/root/usr/share/luci/menu.d/luci-app-cloudflared.json" <<'JSON'
+          {
+            "title": "Cloudflared",
+            "order": 60,
+            "action": {
+              "type": "cbi",
+              "path": "cloudflared/config"
+            },
+            "depends": {
+              "acl": [ "luci-app-cloudflared" ]
+            },
+            "path": "/admin/services/cloudflared"
+          }
+          JSON
+
           echo "Official luci-app-cloudflared synced and hard-patched (menu -> Services, title -> Cloudflared):"
           grep -E 'PKG_VERSION|PKG_RELEASE|LUCI_TITLE' -n "$PKGDIR/Makefile" || true
           (ls "$PKGDIR"/root/usr/share/luci/menu.d/*.json 2>/dev/null && sed -n '1,120p' "$PKGDIR"/root/usr/share/luci/menu.d/"$(ls "$PKGDIR"/root/usr/share/luci/menu.d | head -n1)") || true
@@ -284,6 +301,11 @@ jobs:
             opkg install "$I18N_PKG" || true
           else
             echo "未包含中文语言包，继续安装主程序。"
+          fi
+
+          # 额外：将已存在的 VPN 菜单改写为 Services，避免旧文件覆盖新路径
+          if ls /usr/share/luci/menu.d/*.json >/dev/null 2>&1; then
+            sed -i -E 's#/admin/vpn/cloudflared#/admin/services/cloudflared#g; s#/admin/vpn/#/admin/services/#g' /usr/share/luci/menu.d/*.json 2>/dev/null || true
           fi
 
           # 尝试启用/启动 cloudflared 服务（若存在）
