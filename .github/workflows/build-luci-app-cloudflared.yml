@@ -86,24 +86,30 @@ jobs:
           # 修正 luci.mk 包含路径，适配 package/custom 位置
           sed -i 's|^include \.\./\.\./luci\.mk|include $(TOPDIR)/feeds/luci/luci.mk|' "$PKGDIR/Makefile"
 
-          # 菜单从 VPN 移到 服务（兼容 controller.lua 与 menu.d JSON）
+          # 强制将菜单移到“服务”：
+          # 1) controller.lua 里的 entry(...) 路径
           if [ -f "$PKGDIR/luasrc/controller/cloudflared.lua" ]; then
-            sed -i 's/{\"admin\",\"vpn\",\"cloudflared\"}/{\"admin\",\"services\",\"cloudflared\"}/' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
-            sed -i 's/{\"admin\",[[:space:]]*\"vpn\",[[:space:]]*\"cloudflared\"}/{\"admin\",\"services\",\"cloudflared\"}/' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
+            sed -i -E 's@\{[[:space:]]*"admin"[[:space:]]*,[[:space:]]*"vpn"[[:space:]]*,[[:space:]]*"cloudflared"[[:space:]]*\}@{"admin","services","cloudflared"}@g' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
+            sed -i -E 's@\{[[:space:]]*"admin"[[:space:]]*,[[:space:]]*"network"[[:space:]]*,[[:space:]]*"cloudflared"[[:space:]]*\}@{"admin","services","cloudflared"}@g' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
           fi
+          # 2) menu.d JSON 路径键和值中的 admin/vpn/... -> admin/services/...
           if ls "$PKGDIR"/root/usr/share/luci/menu.d/*.json >/dev/null 2>&1; then
-            sed -i 's#/admin/vpn#/admin/services#g' "$PKGDIR"/root/usr/share/luci/menu.d/*.json || true
+            sed -i -E 's#/admin/(vpn|network)/cloudflared#/admin/services/cloudflared#g; s#/admin/(vpn|network)/#/admin/services/#g' "$PKGDIR"/root/usr/share/luci/menu.d/*.json || true
+            # 兼容键名就是 "admin/vpn/cloudflared" 的情况
+            sed -i -E 's#"admin/(vpn|network)/cloudflared"#"admin/services/cloudflared"#g' "$PKGDIR"/root/usr/share/luci/menu.d/*.json || true
           fi
 
-          # 去掉中文标题里的“零信任隧道”
+          # 标题统一：英文与中文都显示为“Cloudflared”
+          # 3) Makefile 中的 LUCI_TITLE
+          sed -i -E 's@^(LUCI_TITLE:=).*@\1Cloudflared@' "$PKGDIR/Makefile" || true
+          # 4) 中文 po 中的翻译字符串
           if [ -d "$PKGDIR/po/zh-cn" ]; then
-            grep -rl 'Cloudflare 零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i 's/Cloudflare 零信任隧道/Cloudflared/g'
-            grep -rl '零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i 's/零信任隧道//g'
+            grep -rlE 'Cloudflare[[:space:]]*零信任隧道|零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i -E 's@Cloudflare[[:space:]]*零信任隧道@Cloudflared@g; s@零信任隧道@@g'
           fi
 
-          echo "Official luci-app-cloudflared synced and patched (menu to Services, title trimmed):"
+          echo "Official luci-app-cloudflared synced and hard-patched (menu -> Services, title -> Cloudflared):"
           grep -E 'PKG_VERSION|PKG_RELEASE|LUCI_TITLE' -n "$PKGDIR/Makefile" || true
-          ls -lah "$PKGDIR" | sed -n '1,200p'
+          (ls "$PKGDIR"/root/usr/share/luci/menu.d/*.json 2>/dev/null && sed -n '1,120p' "$PKGDIR"/root/usr/share/luci/menu.d/"$(ls "$PKGDIR"/root/usr/share/luci/menu.d | head -n1)") || true
 
       - name: Configure SDK
         working-directory: ${{ env.SDK_DIR }}
