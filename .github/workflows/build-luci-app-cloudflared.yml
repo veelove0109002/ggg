@@ -85,7 +85,23 @@ jobs:
           rsync -a "$TMP_LUCI/applications/luci-app-cloudflared/" "$PKGDIR/"
           # 修正 luci.mk 包含路径，适配 package/custom 位置
           sed -i 's|^include \.\./\.\./luci\.mk|include $(TOPDIR)/feeds/luci/luci.mk|' "$PKGDIR/Makefile"
-          echo "Official luci-app-cloudflared synced from openwrt/luci (openwrt-23.05):"
+
+          # 菜单从 VPN 移到 服务（兼容 controller.lua 与 menu.d JSON）
+          if [ -f "$PKGDIR/luasrc/controller/cloudflared.lua" ]; then
+            sed -i 's/{\"admin\",\"vpn\",\"cloudflared\"}/{\"admin\",\"services\",\"cloudflared\"}/' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
+            sed -i 's/{\"admin\",[[:space:]]*\"vpn\",[[:space:]]*\"cloudflared\"}/{\"admin\",\"services\",\"cloudflared\"}/' "$PKGDIR/luasrc/controller/cloudflared.lua" || true
+          fi
+          if ls "$PKGDIR"/root/usr/share/luci/menu.d/*.json >/dev/null 2>&1; then
+            sed -i 's#/admin/vpn#/admin/services#g' "$PKGDIR"/root/usr/share/luci/menu.d/*.json || true
+          fi
+
+          # 去掉中文标题里的“零信任隧道”
+          if [ -d "$PKGDIR/po/zh-cn" ]; then
+            grep -rl 'Cloudflare 零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i 's/Cloudflare 零信任隧道/Cloudflared/g'
+            grep -rl '零信任隧道' "$PKGDIR/po/zh-cn" | xargs -r sed -i 's/零信任隧道//g'
+          fi
+
+          echo "Official luci-app-cloudflared synced and patched (menu to Services, title trimmed):"
           grep -E 'PKG_VERSION|PKG_RELEASE|LUCI_TITLE' -n "$PKGDIR/Makefile" || true
           ls -lah "$PKGDIR" | sed -n '1,200p'
 
