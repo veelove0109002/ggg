@@ -71,14 +71,24 @@ jobs:
           printf "src-git luci https://github.com/openwrt/luci;%s\n" "$FEED_BRANCH" > feeds.conf.default
           ./scripts/feeds update luci
 
-      - name: Fetch upstream luci-app-cloudflared (full UI)
+      - name: Fetch upstream luci-app-cloudflared (full UI, v1.2-r1)
         working-directory: ${{ env.SDK_DIR }}
         run: |
           set -e
           PKGDIR=package/custom/luci-app-cloudflared
           rm -rf "$PKGDIR"
-          git clone --depth=1 https://github.com/lmq8267/luci-app-cloudflared.git "$PKGDIR"
-          echo "Upstream luci-app-cloudflared fetched:"
+          # clone full history to allow checking out specific version
+          git clone https://github.com/lmq8267/luci-app-cloudflared.git "$PKGDIR"
+          # try checkout v1.2-r1 tag/branch; if missing, keep default
+          if git -C "$PKGDIR" rev-parse -q --verify "refs/tags/v1.2-r1" >/dev/null 2>&1; then
+            git -C "$PKGDIR" checkout -q "tags/v1.2-r1"
+          elif git -C "$PKGDIR" rev-parse -q --verify "v1.2-r1" >/dev/null 2>&1; then
+            git -C "$PKGDIR" checkout -q "v1.2-r1"
+          else
+            echo "未找到 v1.2-r1 标签/分支，使用默认分支"
+          fi
+          echo "Upstream luci-app-cloudflared fetched (target: v1.2-r1):"
+          git -C "$PKGDIR" log --oneline -n 3 || true
           ls -lah "$PKGDIR" | sed -n '1,200p'
 
       - name: Configure SDK
