@@ -70,6 +70,7 @@ jobs:
           FEED_BRANCH=openwrt-23.05
           printf "src-git luci https://github.com/openwrt/luci;%s\n" "$FEED_BRANCH" > feeds.conf.default
           ./scripts/feeds update luci
+          ./scripts/feeds install -a -p luci
 
       - name: Fetch official luci-app-cloudflared from openwrt/luci (openwrt-23.05)
         working-directory: ${{ env.SDK_DIR }}
@@ -82,6 +83,8 @@ jobs:
           rm -rf "$PKGDIR"
           mkdir -p "$PKGDIR"
           rsync -a "$TMP_LUCI/applications/luci-app-cloudflared/" "$PKGDIR/"
+          # 修正 luci.mk 包含路径，适配 package/custom 位置
+          sed -i 's|^include \.\./\.\./luci\.mk|include $(TOPDIR)/feeds/luci/luci.mk|' "$PKGDIR/Makefile"
           echo "Official luci-app-cloudflared synced from openwrt/luci (openwrt-23.05):"
           grep -E 'PKG_VERSION|PKG_RELEASE|LUCI_TITLE' -n "$PKGDIR/Makefile" || true
           ls -lah "$PKGDIR" | sed -n '1,200p'
@@ -126,17 +129,10 @@ jobs:
         working-directory: ${{ env.SDK_DIR }}
         run: |
           set -e
-          make package/luci/host/compile V=s || true
-          make package/luci/compile V=s || true
+          # 先准备 luci-base 的 host 工具（包含 po2lmo）
+          make package/feeds/luci/luci-base/host/compile V=s || true
+          # 编译应用（luci.mk 会自动处理 .po -> .lmo）
           make package/luci-app-cloudflared/compile V=s -j"$(nproc)"
-          # Convert all zh-cn .po to .lmo (if present)
-          if [ -d package/custom/luci-app-cloudflared/po/zh-cn ]; then
-            find package/custom/luci-app-cloudflared/po/zh-cn -type f -name '*.po' -print | while read -r po; do
-              lmo="package/custom/luci-app-cloudflared/po/zh-cn/$(basename "${po%.po}").lmo"
-              echo "po2lmo: $po -> $lmo"
-              po2lmo "$po" "$lmo" || true
-            done
-          fi
 
       - name: Collect IPK artifacts
         id: ipk
