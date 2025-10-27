@@ -51,18 +51,9 @@ jobs:
           SDK_DIR=$(tar -tf "$SDK_ARCHIVE" | head -1 | cut -f1 -d"/")
           echo "SDK_DIR=$SDK_DIR" >> "$GITHUB_ENV"
 
-          # 解析 SDK 版本与目标架构（用于命名）
+          # 解析 SDK 版本（用于命名），ARCH_MAP 将在 .config 中自动检测
           SDK_VER="$(echo "$SDK_ARCHIVE" | sed -E 's/^openwrt-sdk-([^-]+).*/\1/')"
-          TARGET_RAW="$(echo "$SDK_ARCHIVE" | sed -E 's/^openwrt-sdk-[^-]+-([^-]+)-.*/\1/')"
-          SUBTARGET_RAW="$(echo "$SDK_ARCHIVE" | sed -E 's/^openwrt-sdk-[^-]+-[^-]+-([^-]+).*/\1/')"
-          # 统一架构展示：x86/64 -> x86_64
-          if [ "$TARGET_RAW" = "x86" ] && [ "$SUBTARGET_RAW" = "64" ]; then
-            ARCH_MAP="x86_64"
-          else
-            ARCH_MAP="${TARGET_RAW}_${SUBTARGET_RAW}"
-          fi
           echo "SDK_VER=$SDK_VER" >> "$GITHUB_ENV"
-          echo "ARCH_MAP=$ARCH_MAP" >> "$GITHUB_ENV"
 
       - name: Cache downloads (dl)
         uses: actions/cache@v4
@@ -174,6 +165,21 @@ jobs:
           echo "# CONFIG_PACKAGE_rpcd-mod-ucode is not set" >> .config
           make defconfig
 
+          # 从 .config 自动检测目标架构（如 x86_64）
+          TGT="$(grep -E '^CONFIG_TARGET_[^=]+_=y' .config | sed -E 's/^CONFIG_TARGET_([a-z0-9]+)_=y/\1/' | head -n1 || true)"
+          SUB="$(grep -E '^CONFIG_TARGET_[^=]+_[^=]+=y' .config | sed -E 's/^CONFIG_TARGET_([a-z0-9]+)_([a-z0-9_]+)=y/\2/' | head -n1 || true)"
+          if [ -z "$TGT" ] || [ -z "$SUB" ]; then
+            if grep -q '^CONFIG_TARGET_x86=y' .config && grep -q '^CONFIG_TARGET_x86_64=y' .config; then
+              TGT="x86"; SUB="64"
+            fi
+          fi
+          if [ "$TGT" = "x86" ] && [ "$SUB" = "64" ]; then
+            ARCH_MAP="x86_64"
+          else
+            ARCH_MAP="${TGT}_${SUB}"
+          fi
+          echo "ARCH_MAP=${ARCH_MAP}" >> "$GITHUB_ENV"
+
       - name: Build luci-app-cloudflared (and zh-cn i18n)
         working-directory: ${{ env.SDK_DIR }}
         run: |
@@ -198,7 +204,7 @@ jobs:
           echo "COPIED_TO=$GITHUB_WORKSPACE/artifacts" >> "$GITHUB_ENV"
           echo "IPK_LIST:" && ls -lh "$GITHUB_WORKSPACE/artifacts" || true
 
-      - name: Locate app and zh-cn i18n
+      - name: Locate app and zh-cn i18n (optional)
         id: locate
         run: |
           set -e
@@ -210,15 +216,14 @@ jobs:
             exit 1
           fi
           if [ -z "$I18N_PKG" ]; then
-            echo "未找到 zh-cn 语言包"
-            ls -lh artifacts || true
-            exit 1
+            echo "警告: 未找到 zh-cn 语言包（将继续，仅不包含中文翻译）"
           fi
           echo "APP_PKG_PATH=$APP_PKG" >> "$GITHUB_ENV"
-          echo "I18N_PKG_PATH=$I18N_PKG" >> "$GITHUB_ENV"
+          [ -n "$I18N_PKG" ] && echo "I18N_PKG_PATH=$I18N_PKG" >> "$GITHUB_ENV"
           echo "app_path=$APP_PKG" >> "$GITHUB_OUTPUT"
-          echo "i18n_path=$I18N_PKG" >> "$GITHUB_OUTPUT"
-          ls -lh "$APP_PKG" "$I18N_PKG"
+          [ -n "$I18N_PKG" ] && echo "i18n_path=$I18N_PKG" >> "$GITHUB_OUTPUT"
+          ls -lh "$APP_PKG" || true
+          [ -n "$I18N_PKG" ] && ls -lh "$I18N_PKG" || true
 
       - name: Parse version from luci-app-cloudflared ipk
         id: parsever
@@ -249,8 +254,10 @@ jobs:
           I18N_BASE="$(basename "$I18N_PKG_PATH")"
           cp -f "$APP_PKG_PATH" "$STAGING_DIR/$APP_BASE"
           cp -f "$APP_PKG_PATH" "$STAGING_DIR/luci-app-cloudflared.ipk"
-          cp -f "$I18N_PKG_PATH" "$STAGING_DIR/$I18N_BASE"
-          cp -f "$I18N_PKG_PATH" "$STAGING_DIR/luci-i18n-cloudflared-zh-cn.ipk"
+          if [ -n "$I18N_PKG_PATH" ]; then
+            cp -f "$I18N_PKG_PATH" "$STAGING_DIR/$I18N_BASE"
+            cp -f "$I18N_PKG_PATH" "$STAGING_DIR/luci-i18n-cloudflared-zh-cn.ipk"
+          fi
 
           # 若存在其它依赖 ipk（通常无），归入 depends
           while IFS= read -r -d '' f; do
@@ -311,6 +318,8 @@ jobs:
           if [ -f "$I18N_PKG" ]; then
             echo "安装中文语言包: $I18N_PKG"
             opkg install "$I18N_PKG" || true
+          else
+            echo "未包含中文语言包，继续安装主程序。"
           fi
 
           # 尝试启用/启动 cloudflared 服务（若存在）
